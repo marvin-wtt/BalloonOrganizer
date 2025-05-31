@@ -94,16 +94,51 @@
 
 <script lang="ts" setup>
 import { minimize, toggleMaximize, closeApp } from 'src/composables/windowAPI';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useProjectStore } from 'stores/project';
 import { storeToRefs } from 'pinia';
 import { computed } from 'vue';
 import FlightSelectionItem from 'components/toolbar/FlightSelectionItem.vue';
 import UpdateBtn from 'components/UpdateBtn.vue';
+import { useQuasar } from 'quasar';
+import type { Project } from 'app/src-common/entities';
 
+const quasar = useQuasar();
 const route = useRoute();
+const router = useRouter();
 const projectStore = useProjectStore();
 const { project, isDorty, isSaving } = storeToRefs(projectStore);
+
+window.projectAPI.onOpenRequest((newProject) => {
+  // Directly switch to the new project if it's already loaded or not project is loaded
+  if (
+    !project.value ||
+    project.value.id === newProject.id ||
+    route.name === 'projects'
+  ) {
+    void openProject(newProject);
+  }
+
+  quasar
+    .dialog({
+      title: 'Switch Projects',
+      message: `Do you want to switch to project "${newProject.name}"?`,
+      ok: {
+        label: 'Open Project',
+        color: 'primary',
+        rounded: true,
+      },
+      cancel: {
+        label: 'Cancel',
+        color: 'primary',
+        rounded: true,
+        outline: true,
+      },
+    })
+    .onOk(() => {
+      void openProject(newProject);
+    });
+});
 
 const syncIcon = computed<string>(() => {
   if (isDorty.value || isSaving.value) {
@@ -130,5 +165,14 @@ const label = computed<string>(() => {
 
 async function onSaveProject() {
   await projectStore.saveProject();
+}
+
+async function openProject(newProject: Project) {
+  project.value = newProject;
+
+  await router.push({
+    name: 'flights',
+    params: { projectId: newProject.id },
+  });
 }
 </script>

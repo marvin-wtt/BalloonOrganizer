@@ -22,8 +22,8 @@ if (!singleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
+    log.info('Application is already running, restoring window.');
     mainWindow?.restore();
-    mainWindow?.center();
     mainWindow?.focus();
   });
 }

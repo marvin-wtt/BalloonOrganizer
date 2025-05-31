@@ -189,6 +189,17 @@ export default defineConfig(() => {
             filter: ['*.exe'],
           },
         ],
+
+        fileAssociations: [
+          {
+            ext: ['bpp'],
+            name: 'Balloon Planner Project',
+            description: 'Balloon Planner Project File',
+            role: 'Editor',
+            icon: 'icons/icon.png',
+            mimeType: 'application/json',
+          },
+        ],
       },
     },
 

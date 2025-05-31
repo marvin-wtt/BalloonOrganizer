@@ -1,7 +1,18 @@
-import { ipcMain, type IpcMainEvent } from 'electron';
-import Store from 'electron-store';
-import fse from 'fs-extra';
-import type { Project, ProjectMeta } from 'app/src-common/entities';
+import { app, BrowserWindow, ipcMain, type IpcMainEvent } from 'electron';
+import type { Project } from 'app/src-common/entities';
+import {
+  deleteProjectFromPath,
+  readProjectFromPath,
+  writeProjectToPath,
+} from 'app/src-electron/projectsAPI/file-utils';
+import path from 'path';
+import {
+  addProjectMeta,
+  getProjectIndex,
+  projectFilePath,
+  removeProjectMeta,
+  updateProjectMeta,
+} from 'app/src-electron/projectsAPI/index-store';
 
 export default () => {
   ipcMain.handle('project:index', projectApiHandler.index);
@@ -9,96 +20,115 @@ export default () => {
   ipcMain.handle('project:store', projectApiHandler.store);
   ipcMain.handle('project:update', projectApiHandler.update);
   ipcMain.handle('project:destroy', projectApiHandler.destroy);
+
+  void loadFromArgs(process.argv);
+
+  app.on('open-file', (event, fullFilePath) => {
+    void loadExternalFile(fullFilePath);
+  });
+
+  app.on('second-instance', (_event, argv) => {
+    void loadFromArgs(argv);
+  });
 };
 
-const handleEvent = (next: (...args: unknown[]) => void) => {
+async function loadFromArgs(args: string[]) {
+  if (args.length < 2) {
+    return;
+  }
+
+  const fullFilePath = args[1];
+  if (!fullFilePath) {
+    return;
+  }
+
+  await loadExternalFile(fullFilePath);
+}
+
+async function loadExternalFile(fullFilePath: string) {
+  const project = await readProjectFromPath(fullFilePath);
+
+  const conflict = getProjectIndex().find(
+    (meta) => meta.id === project.id || meta.filePath === fullFilePath,
+  );
+
+  const meta = {
+    id: project.id,
+    name: project.name,
+    description: project.description,
+    createdAt: project.createdAt,
+    filePath: fullFilePath,
+  };
+
+  if (conflict) {
+    updateProjectMeta(meta);
+  } else {
+    addProjectMeta(meta);
+  }
+
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (win.isDestroyed()) {
+      return;
+    }
+
+    if (!win.webContents.isLoading()) {
+      win.webContents.on('did-finish-load', () => {
+        win.webContents.send('project:request-open', project);
+      });
+    } else {
+      win.webContents.send('project:request-open', project);
+    }
+  });
+}
+
+const handleEvent = (next: (...args: unknown[]) => unknown) => {
   return (_event: IpcMainEvent, ...args: unknown[]) => {
     return next(...args);
   };
 };
 
 const projectApiHandler = {
-  index: handleEvent(list),
+  index: handleEvent(getProjectIndex),
   show: handleEvent(load),
   store: handleEvent(create),
   update: handleEvent(update),
   destroy: handleEvent(remove),
 };
 
-const indexStore = new Store<{
-  metas: ProjectMeta[];
-}>({ name: 'projects-index' }); // → projects-index.json
+async function create(project: Project) {
+  const projectDir = app.getPath('userData');
+  const fileName = `project-${project.id}.bpp`;
+  const fullPath = path.join(projectDir, fileName);
 
-const cache = new Map();
-function projStore(id: string) {
-  if (!cache.has(id)) {
-    const store = new Store({
-      name: `project-${id}`,
-      defaults: {},
-    });
-
-    cache.set(id, store);
-  }
-
-  return cache.get(id);
-}
-
-function list() {
-  return indexStore.get('metas', []);
-}
-
-function create(project: Project) {
-  const metas = list();
-
-  if (metas.findIndex((meta) => meta.id === project.id) !== -1) {
-    throw new Error(`Project with id ${project.id} already exists`);
-  }
-  metas.push({
-    id: project.id,
-    name: project.name,
-    description: project.description,
+  addProjectMeta({
+    ...project,
+    filePath: fullPath,
   });
-  indexStore.set('metas', metas);
 
-  projStore(project.id).store = project;
+  await writeProjectToPath(project, fullPath);
 }
 
-function load(id: string) {
-  return projStore(id).store ?? null;
+async function load(id: string) {
+  const filePath = projectFilePath(id);
+
+  return readProjectFromPath(filePath);
 }
 
-function update(project: Project) {
-  projStore(project.id).store = project;
+async function update(project: Project) {
+  const filePath = projectFilePath(project.id);
 
-  // Update meta
-  const metas = list();
-  metas.splice(
-    metas.findIndex((meta) => meta.id === project.id),
-    1,
-    {
-      id: project.id,
-      name: project.name,
-      description: project.description,
-    },
-  );
+  await writeProjectToPath(project, filePath);
 
-  indexStore.set('metas', metas);
+  updateProjectMeta({
+    ...project,
+    filePath,
+  });
 }
 
-function remove(id: string) {
-  const store = projStore(id);
-  const file = store.path;
+async function remove(id: string) {
+  const filePath = projectFilePath(id);
 
-  cache.delete(id);
+  await deleteProjectFromPath(filePath);
 
-  try {
-    fse.unlinkSync(file);
-  } catch (e) {
-    if (e.code !== 'ENOENT') {
-      throw e;
-    }
-  }
-
-  const metas = list().filter((m) => m.id !== id);
-  indexStore.set('metas', metas);
+  removeProjectMeta(id);
 }

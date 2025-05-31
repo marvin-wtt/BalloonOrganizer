@@ -78,7 +78,9 @@ export interface Project extends Identifiable {
 export interface ProjectMeta {
   id: string;
   name: string;
-  description: string;
+  createdAt: string;
+  description?: string;
+  filePath: string;
 }
 
 export interface SmartFillPayload {
